@@ -1,345 +1,244 @@
 # app.py
-"""
-Sustainability Tracker — Full upgraded version with:
-- per-user entries saved to data.csv
-- per-user persistent weekly goals in users.csv
-- demo dataset loader
-- weekly goals & progress bar
-- streak detection (consecutive days)
-- badges/achievements
-- daily challenges (bonus)
-- leaderboards (weekly & all-time)
-- CO2 equivalents (trees, car-miles)
-- lightweight visual improvements
-"""
-
 import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime, date, timedelta
 import matplotlib.pyplot as plt
-from dateutil.parser import parse as parse_dt
+import hashlib
+import json
 
-# ---------------- CONFIG ----------------
-DATA_FILE = "data.csv"
-USERS_FILE = "users.csv"
-
-# Emission factors (lbs CO2 per unit) — defensible, approximate values
+# --- CONFIG: emission factors (lbs CO2 per unit) ---
 EF_MILE = 0.9        # lbs CO2 per mile driven
-EF_KWH = 0.85        # lbs CO2 per kWh
-EF_BOTTLE = 0.1      # lbs CO2 per plastic bottle avoided
-EF_BEEF_MEAL = 6.6   # lbs CO2 per beef meal avoided
+EF_SHOWER = 0.05     # lbs CO2 per minute of shower (approx)
+EF_PLASTIC = 0.1     # lbs CO2 per plastic bottle
+EF_TAKEOUT = 0.5     # lbs CO2 per takeout meal
+EF_LAUNDRY = 2.5     # lbs CO2 per laundry load
 
-# Badge thresholds (lbs) — change these names/values if you want
-BADGE_THRESHOLDS = {
-    "Green Starter": 50,
-    "Climate Champion": 200,
-    "Carbon Crusher": 500
-}
+DATA_DIR = "user_data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-# Default weekly goal (if user doesn't set one)
-DEFAULT_WEEKLY_GOAL = 50
-
-st.set_page_config(page_title="Sustainability Tracker", layout="wide")
-st.title("🌱 Sustainability Tracker — upgraded")
-st.markdown(
-    "Track actions, set goals, earn badges, and see real impact equivalents. "
-    "All entries are saved on the server in `data.csv`; user goals are stored in `users.csv`."
-)
-
-# ---------------- Helpers ----------------
-def ensure_files():
-    if not os.path.exists(DATA_FILE):
-        df_init = pd.DataFrame(columns=[
-            "timestamp", "date", "user",
-            "miles_avoided", "kwh_saved",
-            "bottles_avoided", "beef_meals_avoided",
-            "challenge_plastic", "challenge_meatless", "challenge_bike",
-            "estimated_co2_lbs"
-        ])
-        df_init.to_csv(DATA_FILE, index=False)
-    if not os.path.exists(USERS_FILE):
-        users_init = pd.DataFrame(columns=["user", "weekly_goal"])
-        users_init.to_csv(USERS_FILE, index=False)
-
-def load_data():
-    ensure_files()
-    df = pd.read_csv(DATA_FILE)
-    if not df.empty:
-        try:
-            df['date'] = pd.to_datetime(df['date']).dt.date
-        except Exception:
-            df['date'] = df['date'].apply(lambda x: parse_dt(x).date() if pd.notna(x) else None)
-    return df
+# --- Helper functions ---
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def load_users():
-    ensure_files()
-    users = pd.read_csv(USERS_FILE)
-    return users
+    if not os.path.exists("users.json"):
+        return {}
+    with open("users.json", "r") as f:
+        return json.load(f)
 
-def save_entry(entry: dict):
-    df = load_data()
-    new_df = pd.DataFrame([entry])
-    df = pd.concat([df, new_df], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
+def save_users(users):
+    with open("users.json", "w") as f:
+        json.dump(users, f)
 
-def upsert_user_goal(user, goal):
-    users = load_users()
-    if user in users['user'].values:
-        users.loc[users['user'] == user, 'weekly_goal'] = float(goal)
+def get_user_file(username):
+    return os.path.join(DATA_DIR, f"{username}_data.csv")
+
+def log_entry(username, entry):
+    file_path = get_user_file(username)
+    if not os.path.exists(file_path):
+        df_init = pd.DataFrame(columns=[
+            "timestamp", "date",
+            "miles", "shower_minutes", "plastic_bottles",
+            "takeout_meals", "laundry_loads",
+            "co2_saved"
+        ])
+        df_init.to_csv(file_path, index=False)
+    df = pd.read_csv(file_path)
+    df = df.append(entry, ignore_index=True)
+    df.to_csv(file_path, index=False)
+
+def calculate_co2_savings(entry, baseline):
+    miles_saving = max(baseline["miles"] - entry["miles"], 0) * EF_MILE
+    shower_saving = max(baseline["shower_minutes"] - entry["shower_minutes"], 0) * EF_SHOWER
+    plastic_saving = max(baseline["plastic_bottles"] - entry["plastic_bottles"], 0) * EF_PLASTIC
+    takeout_saving = max(baseline["takeout_meals"] - entry["takeout_meals"], 0) * EF_TAKEOUT
+    # Laundry is weekly: distribute daily equivalent
+    laundry_saving = max(baseline["laundry_loads"] - entry.get("laundry_loads", baseline["laundry_loads"]), 0)/7 * EF_LAUNDRY
+    return miles_saving + shower_saving + plastic_saving + takeout_saving + laundry_saving
+
+def reset_daily_view():
+    if not os.path.exists("last_reset.txt"):
+        with open("last_reset.txt", "w") as f:
+            f.write(str(date.today()))
+        return
+    with open("last_reset.txt", "r") as f:
+        last = date.fromisoformat(f.read())
+    if last < date.today():
+        with open("last_reset.txt", "w") as f:
+            f.write(str(date.today()))
+        st.session_state["daily_reset"] = True
     else:
-        new = pd.DataFrame([{"user": user, "weekly_goal": float(goal)}])
-        users = pd.concat([users, new], ignore_index=True)
-    users.to_csv(USERS_FILE, index=False)
+        st.session_state["daily_reset"] = False
 
-def get_user_goal(user):
-    users = load_users()
-    if user in users['user'].values:
-        try:
-            val = users.loc[users['user'] == user, 'weekly_goal'].iloc[0]
-            return float(val)
-        except Exception:
-            return DEFAULT_WEEKLY_GOAL
-    return DEFAULT_WEEKLY_GOAL
+# --- Streamlit page setup ---
+st.set_page_config(page_title="Sustainability Tracker", layout="wide")
+st.title("🌱 Personalized Sustainability Tracker")
 
-def compute_co2(miles, kwh, bottles, beef_meals):
-    co2_miles = miles * EF_MILE
-    co2_kwh = kwh * EF_KWH
-    co2_bottles = bottles * EF_BOTTLE
-    co2_beef = beef_meals * EF_BEEF_MEAL
-    total = co2_miles + co2_kwh + co2_bottles + co2_beef
-    return total, (co2_miles, co2_kwh, co2_bottles, co2_beef)
+# Initialize session state
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 
-def user_weekly_sum(df, user, days=7):
-    today = date.today()
-    start = today - timedelta(days=days-1)
-    mask = (df['date'] >= start) & (df['date'] <= today) & (df['user'] == user)
-    return df.loc[mask]['estimated_co2_lbs'].sum()
+# --- Login / Signup ---
+users = load_users()
 
-def user_consecutive_streak(df, user):
-    user_df = df[df['user'] == user]
-    if user_df.empty:
-        return 0
-    dates_set = set(user_df['date'].tolist())
-    streak = 0
-    cur = date.today()
-    while cur in dates_set:
-        streak += 1
-        cur = cur - timedelta(days=1)
-    return streak
+if not st.session_state["logged_in"]:
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
-def badges_for_user(df, user):
-    total = df[df['user'] == user]['estimated_co2_lbs'].sum()
-    badges = []
-    for name, thresh in BADGE_THRESHOLDS.items():
-        if total >= thresh:
-            badges.append((name, thresh))
-    return badges
+    with tab1:
+        st.subheader("Login")
+        username = st.text_input("Username", key="login_user")
+        password = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Login"):
+            if username in users and users[username]["password"] == hash_password(password):
+                st.session_state["logged_in"] = True
+                st.session_state["username"] = username
+                st.success(f"Logged in as {username}")
+                st.experimental_rerun()
+            else:
+                st.error("Invalid username or password")
 
-def co2_equivalents(co2_lbs):
-    trees = co2_lbs / 48 if co2_lbs else 0
-    miles_eq = co2_lbs / EF_MILE if co2_lbs else 0
-    bottles_eq = co2_lbs / EF_BOTTLE if co2_lbs else 0
-    return {"trees": trees, "miles": miles_eq, "bottles": bottles_eq}
+    with tab2:
+        st.subheader("Sign Up")
+        new_user = st.text_input("Username", key="signup_user")
+        new_pass = st.text_input("Password", type="password", key="signup_pass")
+        baseline_miles = st.number_input("Baseline miles driven per day", min_value=0.0, value=5.0)
+        baseline_shower = st.number_input("Baseline shower minutes per day", min_value=0.0, value=10.0)
+        baseline_plastic = st.number_input("Baseline plastic bottles used per day", min_value=0, value=2)
+        baseline_takeout = st.number_input("Baseline takeout meals per day", min_value=0, value=1)
+        baseline_laundry = st.number_input("Baseline laundry loads per week", min_value=0, value=3)
 
-def load_demo_data():
-    """Populate data.csv with a small demo dataset (appends). Useful for showing features."""
-    demo_entries = []
-    base = date.today() - timedelta(days=6)
-    users = ["Alex", "Sam", "Taylor", "Jess"]
-    for i in range(7):
-        d = base + timedelta(days=i)
-        for u in users:
-            miles = float((i + 1) * 0.5) if u == "Alex" else float((i % 3) * 1.2)
-            kwh = float((i % 2) * 1.0)
-            bottles = int((i + 1) % 4)
-            beef = int((i + 2) % 3 == 0)
-            co2, _ = compute_co2(miles, kwh, bottles, beef)
-            demo_entries.append({
+        if st.button("Sign Up"):
+            if new_user in users:
+                st.error("Username already exists")
+            else:
+                users[new_user] = {
+                    "password": hash_password(new_pass),
+                    "baseline": {
+                        "miles": baseline_miles,
+                        "shower_minutes": baseline_shower,
+                        "plastic_bottles": baseline_plastic,
+                        "takeout_meals": baseline_takeout,
+                        "laundry_loads": baseline_laundry
+                    }
+                }
+                save_users(users)
+                st.success("Account created! Please log in.")
+else:
+    username = st.session_state["username"]
+    baseline = users[username]["baseline"]
+
+    reset_daily_view()
+
+    tabs = st.tabs(["Daily Tracker", "Weekly Tracker", "Dashboard", "Leaderboard & Badges", "Settings"])
+
+    # --- Daily Tracker ---
+    with tabs[0]:
+        st.subheader("Daily Sustainability Input")
+        with st.form("daily_form"):
+            miles = st.number_input("Miles driven today", min_value=0.0, value=baseline["miles"], step=0.1)
+            shower = st.number_input("Minutes showered today", min_value=0.0, value=baseline["shower_minutes"], step=1.0)
+            plastic = st.number_input("Plastic bottles used today", min_value=0, value=baseline["plastic_bottles"], step=1)
+            takeout = st.number_input("Takeout meals eaten today", min_value=0, value=baseline["takeout_meals"], step=1)
+            submitted = st.form_submit_button("Save Entry")
+
+        if submitted:
+            entry = {
                 "timestamp": datetime.now().isoformat(),
-                "date": d.isoformat(),
-                "user": u,
-                "miles_avoided": miles,
-                "kwh_saved": kwh,
-                "bottles_avoided": bottles,
-                "beef_meals_avoided": beef,
-                "challenge_plastic": False,
-                "challenge_meatless": False,
-                "challenge_bike": False,
-                "estimated_co2_lbs": float(co2)
-            })
-    df = load_data()
-    df_demo = pd.DataFrame(demo_entries)
-    df = pd.concat([df, df_demo], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
+                "date": date.today().isoformat(),
+                "miles": miles,
+                "shower_minutes": shower,
+                "plastic_bottles": plastic,
+                "takeout_meals": takeout,
+            }
+            co2 = calculate_co2_savings(entry, baseline)
+            entry["co2_saved"] = co2
+            log_entry(username, entry)
+            st.success(f"Saved! CO₂ impact for today: {co2:.2f} lbs")
 
-# ----------------- UI: Layout -----------------
-ensure_files()
-left, middle, right = st.columns([1, 1, 1])
+    # --- Weekly Tracker ---
+    with tabs[1]:
+        st.subheader("Weekly Tracker")
+        file_path = get_user_file(username)
+        df_user = pd.read_csv(file_path) if os.path.exists(file_path) else pd.DataFrame()
+        week_start = date.today() - timedelta(days=date.today().weekday())  # Monday
+        week_end = week_start + timedelta(days=6)
 
-with left:
-    st.header("📥 Log an entry")
-    with st.form("entry_form", clear_on_submit=True):
-        entry_date = st.date_input("Date", value=date.today())
-        user_name = st.text_input("Your name or initials", value="Anonymous")
-        # load user-specific weekly goal if exists
-        current_goal = get_user_goal(user_name) if user_name and user_name != "Anonymous" else DEFAULT_WEEKLY_GOAL
-        weekly_goal = st.number_input("Set your weekly CO₂ goal (lbs)", min_value=10, value=current_goal, step=5)
+        weekly_loads = st.number_input("Laundry loads this week", min_value=0, value=baseline["laundry_loads"], step=1)
+        if st.button("Save Weekly Laundry"):
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "date": date.today().isoformat(),
+                "miles": baseline["miles"],  # placeholder daily value
+                "shower_minutes": baseline["shower_minutes"],
+                "plastic_bottles": baseline["plastic_bottles"],
+                "takeout_meals": baseline["takeout_meals"],
+                "laundry_loads": weekly_loads
+            }
+            co2 = calculate_co2_savings(entry, baseline)
+            entry["co2_saved"] = co2
+            log_entry(username, entry)
+            st.success(f"Laundry entry saved! Weekly CO₂ impact included.")
 
-        st.markdown("**Enter actions (today)**")
-        miles = st.number_input("Miles avoided (or driven less)", min_value=0.0, value=0.0, step=0.1)
-        kwh = st.number_input("Electricity saved (kWh)", min_value=0.0, value=0.0, step=0.1)
-        bottles = st.number_input("Plastic bottles avoided", min_value=0, value=0, step=1)
-        beef_meals = st.number_input("Beef meals avoided", min_value=0, value=0, step=1)
+    # --- Dashboard ---
+    with tabs[2]:
+        st.subheader("Dashboard")
+        if os.path.exists(get_user_file(username)):
+            df = pd.read_csv(get_user_file(username))
+            df["date"] = pd.to_datetime(df["date"]).dt.date
 
-        st.markdown("**Challenges (bonus)**")
-        challenge_plastic = st.checkbox("Avoid disposable plastic today")
-        challenge_meatless = st.checkbox("Eat 1 meatless meal")
-        challenge_bike = st.checkbox("Walk / bike instead of car")
-
-        submit = st.form_submit_button("Save entry")
-
-    if submit:
-        # compute base CO2 and add small bonuses for challenges (to encourage)
-        total_co2, breakdown = compute_co2(miles, kwh, bottles, beef_meals)
-        bonus = 0.0
-        if challenge_plastic:
-            bonus += 0.1
-        if challenge_meatless:
-            bonus += 0.5
-        if challenge_bike:
-            bonus += 0.2
-        total_co2 += bonus
-
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "date": entry_date.isoformat(),
-            "user": user_name.strip() if user_name.strip() else "Anonymous",
-            "miles_avoided": float(miles),
-            "kwh_saved": float(kwh),
-            "bottles_avoided": int(bottles),
-            "beef_meals_avoided": int(beef_meals),
-            "challenge_plastic": bool(challenge_plastic),
-            "challenge_meatless": bool(challenge_meatless),
-            "challenge_bike": bool(challenge_bike),
-            "estimated_co2_lbs": float(total_co2)
-        }
-
-        try:
-            save_entry(entry)
-            upsert_user_goal(entry["user"], weekly_goal)  # persist user's weekly goal
-            st.success(f"Saved! ✅ Estimated {total_co2:.1f} lbs CO₂ avoided (including bonuses).")
-        except Exception as e:
-            st.error("Error saving entry: " + str(e))
-
-    st.markdown("---")
-    st.write("Need demo data to show features?")
-    if st.button("Load demo dataset (adds sample users)"):
-        try:
-            load_demo_data()
-            st.success("Demo data added — refresh dashboard on the right.")
-        except Exception as e:
-            st.error("Failed to load demo data: " + str(e))
-
-with middle:
-    st.header("📊 Quick community metrics")
-    df = load_data()
-    if df.empty:
-        st.info("No entries yet. Add an entry on the left to begin tracking.")
-    else:
-        total_co2_all = df['estimated_co2_lbs'].sum()
-        total_miles_all = df['miles_avoided'].sum()
-        total_bottles_all = df['bottles_avoided'].sum()
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total CO₂ avoided (lbs)", f"{total_co2_all:.1f}")
-        col2.metric("Total miles avoided", f"{total_miles_all:.1f}")
-        col3.metric("Total bottles avoided", f"{int(total_bottles_all)}")
-
-        # community last 7 days
-        today = date.today()
-        week_start = today - timedelta(days=6)
-        period = df[df['date'] >= week_start].groupby('date', as_index=False)['estimated_co2_lbs'].sum()
-        if not period.empty:
+            st.write("**Total CO₂ saved:**", round(df["co2_saved"].sum(),2))
+            # Weekly view
+            week_mask = (df["date"] >= date.today()-timedelta(days=6)) & (df["date"] <= date.today())
+            df_week = df.loc[week_mask].groupby("date")["co2_saved"].sum().reset_index()
             fig, ax = plt.subplots()
-            ax.plot(period['date'].astype(str), period['estimated_co2_lbs'], marker='o')
+            ax.plot(df_week["date"], df_week["co2_saved"], marker='o')
             ax.set_xlabel("Date")
-            ax.set_ylabel("Estimated CO₂ (lbs)")
-            ax.set_title("Community CO₂ saved — last 7 days")
-            plt.xticks(rotation=45)
+            ax.set_ylabel("CO₂ Impact (lbs)")
+            ax.set_title("Daily CO₂ Impact — Last 7 days")
+            fig.autofmt_xdate()
             st.pyplot(fig)
 
-with right:
-    st.header("👤 Personal dashboard")
-    df = load_data()
-    if df.empty:
-        st.info("No entries yet. Add one to begin.")
-    else:
-        users = sorted(df['user'].unique().tolist())
-        selected_user = st.selectbox("Select user to view", users, index=(0 if users else None))
-        if selected_user:
-            # load persisted goal
-            user_goal = get_user_goal(selected_user)
-            st.subheader(f"{selected_user}")
-            weekly_sum = user_weekly_sum(df, selected_user, days=7)
-            st.write(f"CO₂ saved in last 7 days: **{weekly_sum:.1f} lbs**")
-            pct = min(weekly_sum / user_goal, 1.0) if user_goal else 0.0
-            st.progress(pct)
-            st.write(f"Weekly goal: **{user_goal:.1f} lbs** (stored)")
+            st.write("**Raw entries:**")
+            st.dataframe(df.sort_values("date", ascending=False))
+        else:
+            st.info("No data yet. Start logging your daily actions!")
 
-            # streak
-            streak = user_consecutive_streak(df, selected_user)
-            st.write(f"🔥 Current logging streak: **{streak} days**")
+    # --- Leaderboard & Badges ---
+    with tabs[3]:
+        st.subheader("Leaderboard & Badges")
+        # Calculate leaderboard
+        leaderboard = []
+        for user in users:
+            user_file = get_user_file(user)
+            if os.path.exists(user_file):
+                df_user = pd.read_csv(user_file)
+                total = df_user["co2_saved"].sum()
+                leaderboard.append((user, total))
+        leaderboard = sorted(leaderboard, key=lambda x: x[1], reverse=True)
+        st.write("### Top Users by CO₂ Saved")
+        for i, (user_, total_) in enumerate(leaderboard[:10], start=1):
+            st.write(f"{i}. {user_}: {round(total_,2)} lbs CO₂ saved")
 
-            # badges
-            earned = badges_for_user(df, selected_user)
-            st.write("🏅 Badges earned:")
-            if earned:
-                for name, thresh in earned:
-                    st.success(f"{name} — {thresh} lbs")
-            else:
-                st.write("No badges yet — keep going!")
+        # Badges
+        st.write("### Badges")
+        df_user = pd.read_csv(get_user_file(username))
+        total_saved = df_user["co2_saved"].sum()
+        streak = len(df_user)  # simple: count entries
+        if streak >= 7:
+            st.write("🏆 Consistency Hero: 7+ consecutive entries!")
+        if total_saved >= 100:
+            st.write("🌟 Carbon Crusher: 100+ lbs saved!")
+        if streak >= 30:
+            st.write("💎 Eco Elite: 30+ entries!")
 
-            # personal timeseries (last 30 days)
-            user_df = df[df['user'] == selected_user].copy()
-            user_df = user_df.groupby('date', as_index=False)['estimated_co2_lbs'].sum()
-            if not user_df.empty:
-                fig2, ax2 = plt.subplots()
-                ax2.bar(user_df['date'].astype(str), user_df['estimated_co2_lbs'])
-                ax2.set_xlabel("Date")
-                ax2.set_ylabel("Estimated CO₂ (lbs)")
-                ax2.set_title(f"{selected_user} — CO₂ by day (summary)")
-                plt.xticks(rotation=45)
-                st.pyplot(fig2)
-
-            eq = co2_equivalents(weekly_sum)
-            st.write("Equivalent for this week's savings:")
-            st.write(f"- ≈ **{eq['trees']:.2f}** trees (annual sequestration equivalent)")
-            st.write(f"- ≈ **{eq['miles']:.1f}** car miles avoided")
-            st.write(f"- ≈ **{eq['bottles']:.0f}** plastic bottles worth (approx)")
-
-        # Leaderboards
-        st.markdown("---")
-        st.subheader("🏆 Leaderboards")
-        weekly_df = df[(df['date'] >= week_start) & (df['date'] <= today)].groupby('user', as_index=False)['estimated_co2_lbs'].sum()
-        weekly_df = weekly_df.sort_values('estimated_co2_lbs', ascending=False).head(10)
-        if not weekly_df.empty:
-            st.write("Top this week (lbs CO₂ saved):")
-            st.table(weekly_df.rename(columns={"estimated_co2_lbs": "weekly_co2_lbs"}).set_index('user'))
-
-        all_time = df.groupby('user', as_index=False)['estimated_co2_lbs'].sum().sort_values('estimated_co2_lbs', ascending=False).head(10)
-        if not all_time.empty:
-            st.write("Top all-time (lbs CO₂ saved):")
-            st.table(all_time.rename(columns={"estimated_co2_lbs": "alltime_co2_lbs"}).set_index('user'))
-
-        st.markdown("---")
-        st.subheader("📥 Raw data & export")
-        st.dataframe(df.sort_values('date', ascending=False).reset_index(drop=True))
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download full CSV", data=csv, file_name='sustain_data.csv', mime='text/csv')
-
-# ---------------- Footer / Credibility ----------------
-st.markdown("---")
-st.markdown(
-    "**Notes on estimates:** Emission factors (miles, electricity, plastic, beef) are approximate. "
-    "When you cite totals, include a short credibility line (e.g., 'Estimates use EPA averages and published factors for vehicle miles and electricity')."
-)
+    # --- Settings / Logout ---
+    with tabs[4]:
+        st.subheader("Settings")
+        if st.button("Logout"):
+            st.session_state["logged_in"] = False
+            st.session_state["username"] = ""
+            st.experimental_rerun()
