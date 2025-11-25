@@ -9,10 +9,10 @@ import json
 
 # --- CONFIG: emission factors (lbs CO2 per unit) ---
 EF_MILE = 0.9        # lbs CO2 per mile driven
-EF_SHOWER = 0.05     # lbs CO2 per minute of shower (approx)
+EF_SHOWER = 0.05     # lbs CO2 per minute of shower
 EF_PLASTIC = 0.1     # lbs CO2 per plastic bottle
 EF_TAKEOUT = 0.5     # lbs CO2 per takeout meal
-EF_LAUNDRY = 2.5     # lbs CO2 per laundry load
+EF_LAUNDRY = 2.5     # lbs CO2 per laundry load (weekly, divided daily)
 
 DATA_DIR = "user_data"
 if not os.path.exists(DATA_DIR):
@@ -46,7 +46,7 @@ def log_entry(username, entry):
         ])
         df_init.to_csv(file_path, index=False)
     df = pd.read_csv(file_path)
-    df = df.append(entry, ignore_index=True)
+    df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
     df.to_csv(file_path, index=False)
 
 def calculate_co2_savings(entry, baseline):
@@ -55,13 +55,16 @@ def calculate_co2_savings(entry, baseline):
     plastic_saving = max(baseline["plastic_bottles"] - entry["plastic_bottles"], 0) * EF_PLASTIC
     takeout_saving = max(baseline["takeout_meals"] - entry["takeout_meals"], 0) * EF_TAKEOUT
     # Laundry is weekly: distribute daily equivalent
-    laundry_saving = max(baseline["laundry_loads"] - entry.get("laundry_loads", baseline["laundry_loads"]), 0)/7 * EF_LAUNDRY
+    laundry_saving = max(baseline["laundry_loads"] - entry.get("laundry_loads", baseline["laundry_loads"]), 0) / 7 * EF_LAUNDRY
     return miles_saving + shower_saving + plastic_saving + takeout_saving + laundry_saving
 
 def reset_daily_view():
+    if "daily_reset" not in st.session_state:
+        st.session_state["daily_reset"] = False
     if not os.path.exists("last_reset.txt"):
         with open("last_reset.txt", "w") as f:
             f.write(str(date.today()))
+        st.session_state["daily_reset"] = True
         return
     with open("last_reset.txt", "r") as f:
         last = date.fromisoformat(f.read())
@@ -82,9 +85,16 @@ if "logged_in" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state["username"] = ""
 
-# --- Login / Signup ---
+# --- Load users ---
 users = load_users()
 
+# --- Auto-login after signup ---
+if "just_signed_up" in st.session_state:
+    st.session_state["logged_in"] = True
+    st.session_state["username"] = st.session_state.pop("just_signed_up")
+    st.experimental_rerun()
+
+# --- Login / Signup ---
 if not st.session_state["logged_in"]:
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
@@ -126,7 +136,10 @@ if not st.session_state["logged_in"]:
                     }
                 }
                 save_users(users)
-                st.success("Account created! Please log in.")
+                st.session_state["just_signed_up"] = new_user
+                st.success("Account created! Logging you in...")
+
+# --- Main App ---
 else:
     username = st.session_state["username"]
     baseline = users[username]["baseline"]
@@ -152,7 +165,7 @@ else:
                 "miles": miles,
                 "shower_minutes": shower,
                 "plastic_bottles": plastic,
-                "takeout_meals": takeout,
+                "takeout_meals": takeout
             }
             co2 = calculate_co2_savings(entry, baseline)
             entry["co2_saved"] = co2
@@ -164,15 +177,12 @@ else:
         st.subheader("Weekly Tracker")
         file_path = get_user_file(username)
         df_user = pd.read_csv(file_path) if os.path.exists(file_path) else pd.DataFrame()
-        week_start = date.today() - timedelta(days=date.today().weekday())  # Monday
-        week_end = week_start + timedelta(days=6)
-
         weekly_loads = st.number_input("Laundry loads this week", min_value=0, value=baseline["laundry_loads"], step=1)
         if st.button("Save Weekly Laundry"):
             entry = {
                 "timestamp": datetime.now().isoformat(),
                 "date": date.today().isoformat(),
-                "miles": baseline["miles"],  # placeholder daily value
+                "miles": baseline["miles"],
                 "shower_minutes": baseline["shower_minutes"],
                 "plastic_bottles": baseline["plastic_bottles"],
                 "takeout_meals": baseline["takeout_meals"],
@@ -190,9 +200,9 @@ else:
             df = pd.read_csv(get_user_file(username))
             df["date"] = pd.to_datetime(df["date"]).dt.date
 
-            st.write("**Total CO₂ saved:**", round(df["co2_saved"].sum(),2))
+            st.write("**Total CO₂ saved:**", round(df["co2_saved"].sum(), 2))
             # Weekly view
-            week_mask = (df["date"] >= date.today()-timedelta(days=6)) & (df["date"] <= date.today())
+            week_mask = (df["date"] >= date.today() - timedelta(days=6)) & (df["date"] <= date.today())
             df_week = df.loc[week_mask].groupby("date")["co2_saved"].sum().reset_index()
             fig, ax = plt.subplots()
             ax.plot(df_week["date"], df_week["co2_saved"], marker='o')
@@ -210,7 +220,6 @@ else:
     # --- Leaderboard & Badges ---
     with tabs[3]:
         st.subheader("Leaderboard & Badges")
-        # Calculate leaderboard
         leaderboard = []
         for user in users:
             user_file = get_user_file(user)
@@ -221,13 +230,12 @@ else:
         leaderboard = sorted(leaderboard, key=lambda x: x[1], reverse=True)
         st.write("### Top Users by CO₂ Saved")
         for i, (user_, total_) in enumerate(leaderboard[:10], start=1):
-            st.write(f"{i}. {user_}: {round(total_,2)} lbs CO₂ saved")
+            st.write(f"{i}. {user_}: {round(total_, 2)} lbs CO₂ saved")
 
         # Badges
-        st.write("### Badges")
         df_user = pd.read_csv(get_user_file(username))
         total_saved = df_user["co2_saved"].sum()
-        streak = len(df_user)  # simple: count entries
+        streak = len(df_user)
         if streak >= 7:
             st.write("🏆 Consistency Hero: 7+ consecutive entries!")
         if total_saved >= 100:
@@ -242,3 +250,4 @@ else:
             st.session_state["logged_in"] = False
             st.session_state["username"] = ""
             st.experimental_rerun()
+
