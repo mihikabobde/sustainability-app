@@ -42,18 +42,14 @@ def get_log_status(username):
         return False, False
 
     df = pd.read_csv(file_path)
-
-    # Convert date column to actual date objects
     df["date"] = pd.to_datetime(df["date"]).dt.date
 
-    # Daily check — any row with today's date
-    has_daily = any(df["date"] == today)
+    # Daily check — any row with today's date and type "daily"
+    has_daily = any((df["date"] == today) & (df["entry_type"] == "daily"))
 
-    # Weekly check — any row in the last 7 days with laundry or takeout info
+    # Weekly check — any row in last 7 days with type "weekly"
     last_week = today - timedelta(days=7)
-    week_df = df[df["date"] >= last_week]
-
-    has_weekly = any(~week_df["laundry_loads"].isna() | (week_df["takeout_meals"] > 0))
+    has_weekly = any((df["date"] >= last_week) & (df["entry_type"] == "weekly"))
 
     return has_daily, has_weekly
 
@@ -62,7 +58,7 @@ def log_entry(username, entry):
 
     if not os.path.exists(file_path):
         df_init = pd.DataFrame(columns=[
-            "timestamp", "date",
+            "timestamp", "date", "entry_type",
             "miles", "shower_minutes", "plastic_bottles",
             "takeout_meals", "laundry_loads",
             "co2_saved"
@@ -73,15 +69,18 @@ def log_entry(username, entry):
     df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
     df.to_csv(file_path, index=False)
 
-def calculate_co2_savings(entry, baseline):
-    miles_saving = max(baseline["miles"] - entry["miles"], 0) * EF_MILE
-    shower_saving = max(baseline["shower_minutes"] - entry["shower_minutes"], 0) * EF_SHOWER
-    plastic_saving = max(baseline["plastic_bottles"] - entry["plastic_bottles"], 0) * EF_PLASTIC
-    takeout_saving = max(baseline["takeout_meals"] - entry["takeout_meals"], 0) * EF_TAKEOUT
-    laundry_saving = max(
-        baseline["laundry_loads"] - entry.get("laundry_loads", baseline["laundry_loads"]), 
-        0
-    ) / 7 * EF_LAUNDRY
+def calculate_co2_savings(entry, baseline, entry_type):
+    # Daily savings
+    miles_saving = max(baseline["miles"] - entry.get("miles", 0), 0) * EF_MILE
+    shower_saving = max(baseline["shower_minutes"] - entry.get("shower_minutes", 0), 0) * EF_SHOWER
+    plastic_saving = max(baseline["plastic_bottles"] - entry.get("plastic_bottles", 0), 0) * EF_PLASTIC
+
+    if entry_type == "daily":
+        return miles_saving + shower_saving + plastic_saving
+
+    # Weekly savings
+    takeout_saving = max(baseline["takeout_meals"] - entry.get("takeout_meals", 0), 0) * EF_TAKEOUT
+    laundry_saving = max(baseline["laundry_loads"] - entry.get("laundry_loads", 0), 0) / 7 * EF_LAUNDRY
 
     return miles_saving + shower_saving + plastic_saving + takeout_saving + laundry_saving
 
@@ -121,7 +120,6 @@ if not st.session_state["logged_in"]:
         new_pass = st.text_input("New Password", type="password")
 
         st.write("### Set Your Baseline Habits")
-
         baseline_miles = st.number_input("Miles driven per day", min_value=0.0, value=5.0)
         baseline_shower = st.number_input("Shower minutes per day", min_value=0.0, value=10.0)
         baseline_plastic = st.number_input("Plastic bottles per day", min_value=0, value=2)
@@ -182,13 +180,14 @@ else:
                 entry = {
                     "timestamp": datetime.now().isoformat(),
                     "date": date.today().isoformat(),
+                    "entry_type": "daily",
                     "miles": miles,
                     "shower_minutes": shower,
                     "plastic_bottles": plastic,
-                    "takeout_meals": baseline["takeout_meals"],  # weekly
-                    "laundry_loads": baseline["laundry_loads"],
+                    "takeout_meals": None,
+                    "laundry_loads": None,
                 }
-                entry["co2_saved"] = calculate_co2_savings(entry, baseline)
+                entry["co2_saved"] = calculate_co2_savings(entry, baseline, "daily")
                 log_entry(username, entry)
                 st.success("Daily entry saved!")
                 st.rerun()
@@ -208,13 +207,14 @@ else:
                 entry = {
                     "timestamp": datetime.now().isoformat(),
                     "date": date.today().isoformat(),
+                    "entry_type": "weekly",
                     "miles": baseline["miles"],
                     "shower_minutes": baseline["shower_minutes"],
                     "plastic_bottles": baseline["plastic_bottles"],
                     "takeout_meals": weekly_takeout,
                     "laundry_loads": weekly_laundry,
                 }
-                entry["co2_saved"] = calculate_co2_savings(entry, baseline)
+                entry["co2_saved"] = calculate_co2_savings(entry, baseline, "weekly")
                 log_entry(username, entry)
                 st.success("Weekly entry saved!")
                 st.rerun()
@@ -240,14 +240,12 @@ else:
 
             st.write("### All Entries")
             st.dataframe(df.sort_values("date", ascending=False))
-
         else:
             st.info("No entries yet!")
 
     # LEADERBOARD
     with tabs[3]:
         st.subheader("Leaderboard")
-
         leaderboard = []
         for user in users:
             file = get_user_file(user)
