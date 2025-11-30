@@ -35,8 +35,7 @@ def get_user_file(username):
     return os.path.join(DATA_DIR, f"{username}_data.csv")
 
 def get_log_status(username):
-    """Return whether user has submitted daily or weekly entry."""
-    today = date.today().isoformat()
+    today = date.today()
     file_path = get_user_file(username)
 
     if not os.path.exists(file_path):
@@ -44,15 +43,17 @@ def get_log_status(username):
 
     df = pd.read_csv(file_path)
 
-    # Daily = rows from today
-    has_daily = any(df["date"] == today)
-
-    # Weekly = any entry dated within the last 7 days that contains laundry_loads
-    last_week = date.today() - timedelta(days=7)
+    # Convert date column to actual date objects
     df["date"] = pd.to_datetime(df["date"]).dt.date
 
+    # Daily check — any row with today's date
+    has_daily = any(df["date"] == today)
+
+    # Weekly check — any row in the last 7 days with laundry or takeout info
+    last_week = today - timedelta(days=7)
     week_df = df[df["date"] >= last_week]
-    has_weekly = any(~week_df["laundry_loads"].isna())
+
+    has_weekly = any(~week_df["laundry_loads"].isna() | (week_df["takeout_meals"] > 0))
 
     return has_daily, has_weekly
 
