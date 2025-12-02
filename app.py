@@ -34,6 +34,7 @@ def save_users(users):
 def get_user_file(username):
     return os.path.join(DATA_DIR, f"{username}_data.csv")
 
+# ---------------- FIXED DAILY/WEEKLY CHECK ----------------
 def get_log_status(username):
     today = date.today()
     file_path = get_user_file(username)
@@ -42,14 +43,23 @@ def get_log_status(username):
         return False, False
 
     df = pd.read_csv(file_path)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
 
-    # Daily check — any row with today's date and type "daily"
-    has_daily = any((df["date"] == today) & (df["entry_type"] == "daily"))
+    # Normalize dates safely
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
 
-    # Weekly check — any row in last 7 days with type "weekly"
-    last_week = today - timedelta(days=7)
-    has_weekly = any((df["date"] >= last_week) & (df["entry_type"] == "weekly"))
+    # DAILY CHECK – only count MOST RECENT daily entry
+    daily_entries = df[df["entry_type"] == "daily"]
+    last_daily = daily_entries["date"].max() if not daily_entries.empty else None
+    has_daily = (last_daily == today)
+
+    # WEEKLY CHECK – ISO week
+    weekly_entries = df[df["entry_type"] == "weekly"]
+    last_weekly = weekly_entries["date"].max() if not weekly_entries.empty else None
+
+    if last_weekly is None:
+        has_weekly = False
+    else:
+        has_weekly = (last_weekly.isocalendar().week == today.isocalendar().week)
 
     return has_daily, has_weekly
 
@@ -70,7 +80,6 @@ def log_entry(username, entry):
     df.to_csv(file_path, index=False)
 
 def calculate_co2_savings(entry, baseline, entry_type):
-    # Daily savings
     miles_saving = max(baseline["miles"] - entry.get("miles", 0), 0) * EF_MILE
     shower_saving = max(baseline["shower_minutes"] - entry.get("shower_minutes", 0), 0) * EF_SHOWER
     plastic_saving = max(baseline["plastic_bottles"] - entry.get("plastic_bottles", 0), 0) * EF_PLASTIC
@@ -88,6 +97,15 @@ def calculate_co2_savings(entry, baseline, entry_type):
 st.set_page_config(page_title="Sustainability Tracker", layout="wide")
 st.title("🌱 Sustainability Tracker")
 
+# ---------------- NIGHTLY AUTO-RERUN FIX ----------------
+if "last_day" not in st.session_state:
+    st.session_state["last_day"] = date.today()
+
+if st.session_state["last_day"] != date.today():
+    st.session_state["last_day"] = date.today()
+    st.rerun()
+
+# ---------------- Login State ----------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "username" not in st.session_state:
