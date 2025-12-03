@@ -43,16 +43,12 @@ def get_log_status(username):
         return False, False
 
     df = pd.read_csv(file_path)
-
-    # Normalize dates safely
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
 
-    # DAILY CHECK – only count MOST RECENT daily entry
     daily_entries = df[df["entry_type"] == "daily"]
     last_daily = daily_entries["date"].max() if not daily_entries.empty else None
     has_daily = (last_daily == today)
 
-    # WEEKLY CHECK – ISO week
     weekly_entries = df[df["entry_type"] == "weekly"]
     last_weekly = weekly_entries["date"].max() if not weekly_entries.empty else None
 
@@ -87,7 +83,6 @@ def calculate_co2_savings(entry, baseline, entry_type):
     if entry_type == "daily":
         return miles_saving + shower_saving + plastic_saving
 
-    # Weekly savings
     takeout_saving = max(baseline["takeout_meals"] - entry.get("takeout_meals", 0), 0) * EF_TAKEOUT
     laundry_saving = max(baseline["laundry_loads"] - entry.get("laundry_loads", 0), 0) / 7 * EF_LAUNDRY
 
@@ -97,7 +92,6 @@ def calculate_co2_savings(entry, baseline, entry_type):
 st.set_page_config(page_title="Sustainability Tracker", layout="wide")
 st.title("🌱 Sustainability Tracker")
 
-# ---------------- NIGHTLY AUTO-RERUN FIX ----------------
 if "last_day" not in st.session_state:
     st.session_state["last_day"] = date.today()
 
@@ -105,7 +99,6 @@ if st.session_state["last_day"] != date.today():
     st.session_state["last_day"] = date.today()
     st.rerun()
 
-# ---------------- Login State ----------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "username" not in st.session_state:
@@ -115,15 +108,24 @@ users = load_users()
 
 # --------------- LOGIN / SIGNUP --------------------
 if not st.session_state["logged_in"]:
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
-    # LOGIN TAB
+    st.markdown("## 🌍 Measure Your Real Impact")
+    st.markdown(
+        "**Find your real carbon footprint today —** "
+        "and discover the easiest habits that save CO₂ **and** save you money, daily."
+    )
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs(["🔓 Login", "🆕 Create Account"])
+
     with tab1:
-        st.subheader("Login")
+        st.subheader("Welcome Back")
+        st.caption("Continue your eco-streak and keep making progress 🌱")
+
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
 
-        if st.button("Login"):
+        if st.button("Login", use_container_width=True):
             if username in users and users[username]["password"] == hash_password(password):
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -131,20 +133,23 @@ if not st.session_state["logged_in"]:
             else:
                 st.error("Incorrect username or password.")
 
-    # SIGNUP TAB
     with tab2:
-        st.subheader("Sign Up")
-        new_user = st.text_input("New Username")
-        new_pass = st.text_input("New Password", type="password")
+        st.subheader("Start Your Impact Journey")
+        st.caption("Unlock badges 🏅, track progress 📈, and join a growing community.")
+
+        new_user = st.text_input("Create a Username")
+        new_pass = st.text_input("Create a Password", type="password")
 
         st.write("### Set Your Baseline Habits")
+        st.caption("These help us estimate your starting footprint (you can adjust anytime).")
+
         baseline_miles = st.number_input("Miles driven per day", min_value=0.0, value=5.0)
         baseline_shower = st.number_input("Shower minutes per day", min_value=0.0, value=10.0)
         baseline_plastic = st.number_input("Plastic bottles per day", min_value=0, value=2)
         baseline_takeout = st.number_input("Takeout meals per *week*", min_value=0, value=3)
         baseline_laundry = st.number_input("Laundry loads per week", min_value=0, value=3)
 
-        if st.button("Create Account"):
+        if st.button("Create My Free Account 🌍", use_container_width=True):
             if new_user in users:
                 st.error("Username already exists.")
             else:
@@ -159,7 +164,7 @@ if not st.session_state["logged_in"]:
                     }
                 }
                 save_users(users)
-                st.success("Account created! Logging you in...")
+                st.success("Account created! Logging you in... 🚀")
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = new_user
                 st.rerun()
@@ -179,10 +184,9 @@ else:
         "Settings"
     ])
 
-    # DAILY TRACKER
     with tabs[0]:
         st.subheader("Daily Tracker")
-        st.info("Submit your habits **for the entire day**. You can only submit once per day.")
+        st.info("Submit habits **for the entire day**. One entry allowed per day.")
 
         if has_daily:
             st.success("You already submitted today's entry! Come back tomorrow.")
@@ -210,10 +214,9 @@ else:
                 st.success("Daily entry saved!")
                 st.rerun()
 
-    # WEEKLY TRACKER
     with tabs[1]:
         st.subheader("Weekly Tracker")
-        st.info("Submit your usage for the **entire week**. This can only be done once per week.")
+        st.info("Submit once per week for laundry + takeout.")
 
         if has_weekly:
             st.success("You already submitted this week's entry!")
@@ -237,7 +240,6 @@ else:
                 st.success("Weekly entry saved!")
                 st.rerun()
 
-    # DASHBOARD
     with tabs[2]:
         st.subheader("Dashboard")
         file_path = get_user_file(username)
@@ -252,7 +254,7 @@ else:
             fig, ax = plt.subplots()
             ax.plot(df_week["date"], df_week["co2_saved"], marker="o")
             ax.set_xlabel("Date")
-            ax.set_ylabel("CO₂ Saved")
+            ax.set_ylabel("CO₂ Saved (lbs)")
             ax.set_title("CO₂ Savings (Last 7 Days)")
             st.pyplot(fig)
 
@@ -261,7 +263,6 @@ else:
         else:
             st.info("No entries yet!")
 
-    # LEADERBOARD
     with tabs[3]:
         st.subheader("Leaderboard")
         leaderboard = []
@@ -277,7 +278,6 @@ else:
         for i, (u, total) in enumerate(leaderboard, start=1):
             st.write(f"{i}. **{u}** — {round(total,2)} lbs CO₂ saved")
 
-    # SETTINGS TAB
     with tabs[4]:
         st.subheader("Settings")
         if st.button("Logout"):
