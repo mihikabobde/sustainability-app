@@ -543,7 +543,7 @@ else:
         if is_guest_profile:
             st.info("Create an account to appear on the leaderboard and keep progress across devices!")
             if st.button("Create Account & Save Progress"):
-                st.experimental_rerun()  # will show onboarding create account form
+                st.rerun()  # will show onboarding create account form
 
     # Settings
     with tabs[4]:
