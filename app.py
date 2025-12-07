@@ -147,7 +147,7 @@ users = load_users()
 
 # ---------------- Welcome / Onboarding (Guest + Login + Signup) ----------------
 if not st.session_state["logged_in"] and not st.session_state["guest"]:
-    st.markdown("## 🌍 Measure Your Real Impact — No account required")
+    st.markdown("## 🌍 Measure Your Real Impact")
     st.markdown(
         "**Try the app quickly as a guest, or create an account to save progress across devices.**"
     )
