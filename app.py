@@ -313,8 +313,7 @@ else:
     with tabs[0]:
         st.subheader("Daily Tracker")
         st.info("Submit habits for the entire day. One daily entry allowed per day.")
-        if is_guest_profile:
-            st.warning("You're using the app as a guest — create an account to keep progress across devices!")
+        st.info("Baseline values help you measure how much CO₂ you reduce — update them to match your typical habits!")
 
         with st.expander("View / Edit baseline values"):
             b_m = st.number_input("Miles driven per day (baseline)", min_value=0.0, value=float(baseline.get("miles",5.0)), key="edit_baseline_miles")
