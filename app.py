@@ -145,7 +145,7 @@ if not st.session_state["logged_in"]:
 
     st.markdown("## 🌍 Measure Your Real Impact")
     st.markdown(
-        "**Find your real carbon footprint today —** "
+        "**Find your real carbon footprint today ** "
         "and discover the easiest habits that save CO₂ **and** save you money, daily."
     )
     st.markdown("---")
