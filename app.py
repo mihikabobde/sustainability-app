@@ -318,7 +318,7 @@ else:
 
                 # 4️⃣ Carbon-to-Real-World Translation
                 total_saved = sum(co2_total)
-                st.write(f"**Real-world equivalent:** ~ charging your phone {int(total_saved*1150)} times, or driving {int(total_saved*3)} miles, or planting {int(total_saved/48)} trees.")
+                st.write(f"**Real-world equivalent:** ~ charging your phone {int(total_saved*1150)} less times, or driving {int(total_saved*3)} less miles, or planting {int(total_saved/48)} trees.")
 
                 # 6️⃣ If Everyone Did This Projection
                 st.write(f"**If 1,000 people did this:** ~ {int(total_saved*1000)} lbs CO₂ saved per week.")
