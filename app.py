@@ -44,18 +44,14 @@ def get_user_file(username: str) -> str:
 def get_log_status(username: str):
     today = date.today()
     file_path = get_user_file(username)
-
     if not os.path.exists(file_path):
         return False, False
-
     try:
         df = pd.read_csv(file_path)
     except Exception:
         return False, False
-
     if "date" not in df.columns or "entry_type" not in df.columns:
         return False, False
-
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
 
     daily_entries = df[df["entry_type"] == "daily"]
@@ -68,12 +64,10 @@ def get_log_status(username: str):
         has_weekly = False
     else:
         has_weekly = (last_weekly.isocalendar().week == today.isocalendar().week and last_weekly.year == today.year)
-
     return has_daily, has_weekly
 
 def log_entry(username: str, entry: dict):
     file_path = get_user_file(username)
-
     if not os.path.exists(file_path):
         df_init = pd.DataFrame(columns=[
             "timestamp", "date", "entry_type",
@@ -82,7 +76,6 @@ def log_entry(username: str, entry: dict):
             "co2_saved"
         ])
         df_init.to_csv(file_path, index=False)
-
     try:
         df = pd.read_csv(file_path)
     except Exception:
@@ -92,7 +85,6 @@ def log_entry(username: str, entry: dict):
             "takeout_meals", "laundry_loads",
             "co2_saved"
         ])
-
     df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
     df.to_csv(file_path, index=False)
 
@@ -103,22 +95,17 @@ def calculate_co2_savings(entry: dict, baseline: dict, entry_type: str):
     miles_b = baseline.get("miles") or 0
     shower_b = baseline.get("shower_minutes") or 0
     plastic_b = baseline.get("plastic_bottles") or 0
-
     miles_saving = max(miles_b - miles_e, 0) * EF_MILE
     shower_saving = max(shower_b - shower_e, 0) * EF_SHOWER
     plastic_saving = max(plastic_b - plastic_e, 0) * EF_PLASTIC
-
     if entry_type == "daily":
         return miles_saving + shower_saving + plastic_saving
-
     takeout_e = entry.get("takeout_meals") or 0
     laundry_e = entry.get("laundry_loads") or 0
     takeout_b = baseline.get("takeout_meals") or 0
     laundry_b = baseline.get("laundry_loads") or 0
-
     takeout_saving = max(takeout_b - takeout_e, 0) * EF_TAKEOUT
     laundry_saving = max(laundry_b - laundry_e, 0) / 7 * EF_LAUNDRY
-
     return miles_saving + shower_saving + plastic_saving + takeout_saving + laundry_saving
 
 # ----------------- Streamlit Setup -----------------
@@ -140,7 +127,6 @@ if not st.session_state["logged_in"]:
         "and discover the easiest habits that save CO₂ **and** save you money, daily."
     )
     st.markdown("---")
-
     tab1, tab2 = st.tabs(["🔓 Login", "🆕 Create Account"])
 
     with tab1:
@@ -150,10 +136,10 @@ if not st.session_state["logged_in"]:
         password_input = st.text_input("Password", type="password")
         if st.button("Login", use_container_width=True):
             users = load_users()
-            if username_input in users and users[username_input]["password"] == hash_password(password_input or ""):
+            if username_input and username_input in users and users[username_input].get("password") == hash_password(password_input or ""):
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username_input
-                st.rerun()
+                st.experimental_rerun()
             else:
                 st.error("Incorrect username or password.")
 
@@ -169,7 +155,6 @@ if not st.session_state["logged_in"]:
         baseline_plastic = st.number_input("Plastic bottles per day", min_value=0, value=2)
         baseline_takeout = st.number_input("Takeout meals per *week*", min_value=0, value=3)
         baseline_laundry = st.number_input("Laundry loads per week", min_value=0, value=3)
-
         if st.button("Create My Free Account 🌍", use_container_width=True):
             users = load_users()
             if not new_user or not new_pass:
@@ -188,26 +173,40 @@ if not st.session_state["logged_in"]:
                     }
                 }
                 save_users(users)
+                st.success("Account created! Logging you in... 🚀")
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = new_user
-                st.rerun()
+                st.experimental_rerun()
 
 # ---------------- LOGGED-IN VIEW -----------------
 else:
-    username = st.session_state["username"]
+    username = st.session_state.get("username", "")
     users = load_users()
     if username not in users:
-        st.warning("User not found. Logging out.")
+        st.warning("User not found on disk. You've been logged out.")
         st.session_state["logged_in"] = False
         st.session_state["username"] = ""
-        st.rerun()
+        st.experimental_rerun()
 
-    baseline = users[username].get("baseline", {"miles":5, "shower_minutes":10,"plastic_bottles":2,"takeout_meals":3,"laundry_loads":3})
+    baseline = users[username].get("baseline", {
+        "miles": 5.0,
+        "shower_minutes": 10.0,
+        "plastic_bottles": 2,
+        "takeout_meals": 3,
+        "laundry_loads": 3
+    })
+
     has_daily, has_weekly = get_log_status(username)
 
-    tabs = st.tabs(["Daily Tracker","Weekly Tracker","Dashboard","Insights","Settings"])
+    tabs = st.tabs([
+        "Daily Tracker",
+        "Weekly Tracker",
+        "Dashboard",
+        "Insights",   # new 4th tab
+        "Settings"
+    ])
 
-    # ---------- DAILY ----------
+    # ---------------- Daily -----------------
     with tabs[0]:
         st.subheader("Daily Tracker")
         st.info("Submit habits **for the entire day**. One entry allowed per day.")
@@ -220,32 +219,45 @@ else:
                 plastic = st.number_input("Plastic bottles used today", min_value=0, value=baseline["plastic_bottles"])
                 submitted = st.form_submit_button("Save Daily Entry")
             if submitted:
-                entry = {"timestamp":datetime.now().isoformat(),"date":date.today().isoformat(),"entry_type":"daily",
-                        "miles":miles,"shower_minutes":shower,"plastic_bottles":plastic,
-                        "takeout_meals":None,"laundry_loads":None}
+                entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "date": date.today().isoformat(),
+                    "entry_type": "daily",
+                    "miles": miles,
+                    "shower_minutes": shower,
+                    "plastic_bottles": plastic,
+                    "takeout_meals": None,
+                    "laundry_loads": None,
+                }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "daily")
                 log_entry(username, entry)
-                st.rerun()
+                st.experimental_rerun()
 
-    # ---------- WEEKLY ----------
+    # ---------------- Weekly -----------------
     with tabs[1]:
         st.subheader("Weekly Tracker")
         st.info("Submit once per week for laundry + takeout.")
         if has_weekly:
             st.success("You already submitted this week's entry!")
         else:
-            weekly_takeout = st.number_input("Takeout meals this week", min_value=0, value=baseline.get("takeout_meals",0))
-            weekly_laundry = st.number_input("Laundry loads this week", min_value=0, value=baseline.get("laundry_loads",0))
+            weekly_takeout = st.number_input("Takeout meals this week", min_value=0, value=baseline.get("takeout_meals", 0))
+            weekly_laundry = st.number_input("Laundry loads this week", min_value=0, value=baseline.get("laundry_loads", 0))
             if st.button("Save Weekly Entry"):
-                entry = {"timestamp":datetime.now().isoformat(),"date":date.today().isoformat(),"entry_type":"weekly",
-                        "miles":baseline.get("miles",0),"shower_minutes":baseline.get("shower_minutes",0),
-                        "plastic_bottles":baseline.get("plastic_bottles",0),
-                        "takeout_meals":weekly_takeout,"laundry_loads":weekly_laundry}
+                entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "date": date.today().isoformat(),
+                    "entry_type": "weekly",
+                    "miles": baseline.get("miles", 0),
+                    "shower_minutes": baseline.get("shower_minutes", 0),
+                    "plastic_bottles": baseline.get("plastic_bottles", 0),
+                    "takeout_meals": weekly_takeout,
+                    "laundry_loads": weekly_laundry,
+                }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "weekly")
                 log_entry(username, entry)
-                st.rerun()
+                st.experimental_rerun()
 
-    # ---------- DASHBOARD ----------
+    # ---------------- Dashboard -----------------
     with tabs[2]:
         st.subheader("Dashboard")
         file_path = get_user_file(username)
@@ -254,135 +266,71 @@ else:
             if "co2_saved" not in df.columns:
                 df["co2_saved"] = 0
             df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
-            st.metric("Total CO₂ Saved (lbs)", round(df["co2_saved"].sum(),2))
+            st.metric("Total CO₂ Saved (lbs)", round(df["co2_saved"].sum(), 2))
 
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df_week = df[df["date"] >= (datetime.today()-timedelta(days=6))]
+            df_week = df[df["date"] >= (datetime.today() - timedelta(days=6))]
 
             fig, ax = plt.subplots()
             if not df_week.empty:
                 ax.plot(df_week["date"], df_week["co2_saved"], marker="o")
             else:
-                ax.plot([],[])
+                ax.plot([], [])
             ax.set_xlabel("Date")
             ax.set_ylabel("CO₂ Saved (lbs)")
             ax.set_title("CO₂ Savings (Last 7 Days)")
             st.pyplot(fig)
             st.write("### All Entries")
-            st.dataframe(df.sort_values("date",ascending=False))
+            st.dataframe(df.sort_values("date", ascending=False))
         else:
             st.info("No entries yet!")
 
-# ---------- INSIGHTS ----------
-with tabs[3]:
-    st.subheader("Insights")
-    file_path = get_user_file(username)
-    if os.path.exists(file_path):
-        df = pd.read_csv(file_path)
-        if "co2_saved" not in df.columns:
-            df["co2_saved"] = 0
-        df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
-
-        # Ensure date column is datetime
-        if "date" in df.columns:
+    # ---------------- Insights -----------------
+    with tabs[3]:
+        st.subheader("Insights")
+        file_path = get_user_file(username)
+        if os.path.exists(file_path):
+            df = pd.read_csv(file_path)
+            df.fillna(0, inplace=True)
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-        st.metric("Average Daily CO₂ Saved", round(df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0,2))
-        st.metric("Average Weekly CO₂ Saved", round(df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0,2))
-        st.write("Total Entries:", len(df))
-        st.write("Days Logged:", df["date"].nunique())
+            # 1️⃣ Impact Breakdown
+            df_last_week = df[df["date"] >= (datetime.today() - timedelta(days=6))]
+            if not df_last_week.empty:
+                co2_categories = {
+                    "Driving Less": (df_last_week["miles"].max() - df_last_week["miles"]) * EF_MILE,
+                    "Shorter Showers": (df_last_week["shower_minutes"].max() - df_last_week["shower_minutes"]) * EF_SHOWER,
+                    "Fewer Plastic Bottles": (df_last_week["plastic_bottles"].max() - df_last_week["plastic_bottles"]) * EF_PLASTIC,
+                    "Less Takeout": (df_last_week["takeout_meals"].max() - df_last_week["takeout_meals"]) * EF_TAKEOUT if "takeout_meals" in df_last_week.columns else 0,
+                    "Laundry Changes": (df_last_week["laundry_loads"].max() - df_last_week["laundry_loads"]) * EF_LAUNDRY / 7 if "laundry_loads" in df_last_week.columns else 0,
+                }
+                co2_total = [v.sum() for v in co2_categories.values()]
+                fig, ax = plt.subplots()
+                ax.bar(co2_categories.keys(), co2_total, color="seagreen")
+                ax.set_ylabel("CO₂ Saved (lbs)")
+                ax.set_title("Impact Breakdown (Last 7 Days)")
+                st.pyplot(fig)
 
-        # --- 1. What Helped Most? ---
-        st.markdown("### ⭐ What Helped Most?")
-        behaviors = ["miles", "shower_minutes", "plastic_bottles", "takeout_meals", "laundry_loads"]
-        labels = ["Driving Less", "Shorter Showers", "Fewer Plastic Bottles", "Less Takeout", "Laundry Changes"]
+                # 2️⃣ Personalized Weekly Insight
+                max_cat = max(co2_categories, key=lambda k: co2_categories[k].sum())
+                max_value = co2_categories[max_cat].sum()
+                st.write(f"**Weekly Insight:** This week, your biggest CO₂ savings came from **{max_cat}** ({round(max_value,2)} lbs).")
 
-        impact_totals = []
-        for b in behaviors:
-            if b in df.columns:
-                # compute CO2 saved from each behavior
-                if b in ["takeout_meals","laundry_loads"]:
-                    subset = df[df["entry_type"]=="weekly"]
-                else:
-                    subset = df[df["entry_type"]=="daily"]
-                if subset.empty:
-                    impact_totals.append(0)
-                    continue
-                if b=="miles":
-                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["miles"]-x,0)*EF_MILE).sum()))
-                elif b=="shower_minutes":
-                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["shower_minutes"]-x,0)*EF_SHOWER).sum()))
-                elif b=="plastic_bottles":
-                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["plastic_bottles"]-x,0)*EF_PLASTIC).sum()))
-                elif b=="takeout_meals":
-                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["takeout_meals"]-x,0)*EF_TAKEOUT).sum()))
-                elif b=="laundry_loads":
-                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["laundry_loads"]-x,0)/7*EF_LAUNDRY).sum()))
-            else:
-                impact_totals.append(0)
+                # 4️⃣ Carbon-to-Real-World Translation
+                total_saved = sum(co2_total)
+                st.write(f"**Real-world equivalent:** ~ charging your phone {int(total_saved*1150)} times, or driving {int(total_saved*3)} miles, or planting {int(total_saved/48)} trees.")
 
-        fig2, ax2 = plt.subplots()
-        ax2.pie(impact_totals, labels=labels, autopct='%1.1f%%', startangle=140)
-        ax2.set_title("Your biggest CO₂ savings came from...")
-        st.pyplot(fig2)
+                # 6️⃣ If Everyone Did This Projection
+                st.write(f"**If 1,000 people did this:** ~ {int(total_saved*1000)} lbs CO₂ saved per week.")
 
-        # --- 2. Personalized Weekly Insight ---
-        st.markdown("### ⭐ Personalized Weekly Insight")
-        week_start = datetime.today() - timedelta(days=6)
-        df_week = df[df["date"] >= week_start] if "date" in df.columns else pd.DataFrame()
-        contrib = {}
-        for b, label in zip(behaviors, labels):
-            if b in df_week.columns:
-                if b in ["takeout_meals","laundry_loads"]:
-                    sub = df_week[df_week["entry_type"]=="weekly"]
-                else:
-                    sub = df_week[df_week["entry_type"]=="daily"]
-                if sub.empty:
-                    contrib[label] = 0
-                    continue
-                if b=="miles":
-                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["miles"]-x,0)*EF_MILE).mean())
-                elif b=="shower_minutes":
-                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["shower_minutes"]-x,0)*EF_SHOWER).mean())
-                elif b=="plastic_bottles":
-                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["plastic_bottles"]-x,0)*EF_PLASTIC).mean())
-                elif b=="takeout_meals":
-                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["takeout_meals"]-x,0)*EF_TAKEOUT).mean())
-                elif b=="laundry_loads":
-                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["laundry_loads"]-x,0)/7*EF_LAUNDRY).mean())
-        if contrib:
-            top_behavior = max(contrib, key=contrib.get)
-            st.info(f"This week, **{top_behavior}** contributed the most to your CO₂ savings!")
+        else:
+            st.info("No entries yet!")
 
-        # --- 4. Carbon-to-Real-World Translation ---
-        st.markdown("### ⭐ Carbon-to-Real-World Translation")
-        total_saved = df["co2_saved"].sum()
-        phone_charges = int(total_saved / 0.0003)  # ~0.0003 lbs per phone charge
-        miles_driven = round(total_saved / 0.9,1)
-        trees_planted = round(total_saved / 48,1)  # ~48 lbs CO2 per tree per year
-        st.write(f"💡 Your total CO₂ savings is roughly equivalent to:")
-        st.write(f"- Charging your phone **{phone_charges:,} times**")
-        st.write(f"- Avoiding driving **{miles_driven} miles**")
-        st.write(f"- Planting **{trees_planted} trees** per year")
-
-        # --- 6. “If Everyone Did This” Projection ---
-        st.markdown("### ⭐ If Everyone Did This")
-        num_people = 1000
-        avg_daily = df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0
-        avg_weekly = df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0
-        projected_yearly = (avg_daily*365 + avg_weekly*52) * num_people
-        st.write(f"If **{num_people} people** followed your habits for a year, it could save **{round(projected_yearly,0):,} lbs of CO₂**!")
-
-    else:
-        st.info("No data yet!")
-
-
-    # ---------- SETTINGS ----------
+    # ---------------- Settings -----------------
     with tabs[4]:
         st.subheader("Settings")
         st.write(f"Logged in as **{username}**")
         if st.button("Logout"):
             st.session_state["logged_in"] = False
             st.session_state["username"] = ""
-            st.rerun()
-
+            st.experimental_rerun()
