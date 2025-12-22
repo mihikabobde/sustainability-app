@@ -35,7 +35,7 @@ def load_users():
 def save_users(users):
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=2)
-    load_users.clear()  # clear cached users after save
+    load_users.clear()  # clear cache after save
 
 def get_user_file(username):
     return os.path.join(DATA_DIR, f"{username}_data.csv")
@@ -92,10 +92,15 @@ def get_streaks(df):
 st.set_page_config(page_title="Sustainability Tracker", layout="wide")
 st.title("🌱 Sustainability Tracker")
 
+# ---------------- SESSION STATE FLAGS ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
     st.session_state.username = ""
+if "just_saved_daily" not in st.session_state:
+    st.session_state.just_saved_daily = False
+if "just_saved_weekly" not in st.session_state:
+    st.session_state.just_saved_weekly = False
 
 users = load_users()
 
@@ -160,7 +165,8 @@ else:
             miles = st.number_input("Miles today", 0.0, value=baseline["miles"])
             shower = st.number_input("Shower minutes today", 0.0, value=baseline["shower_minutes"])
             plastic = st.number_input("Plastic bottles today", 0, value=baseline["plastic_bottles"])
-            if st.form_submit_button("Save"):
+            submitted_daily = st.form_submit_button("Save Daily")
+            if submitted_daily:
                 entry = {
                     "timestamp": datetime.now().isoformat(),
                     "date": date.today().isoformat(),
@@ -173,8 +179,13 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2(entry, baseline, "daily")
                 log_entry(username, entry)
-                st.success("Saved!")
-                st.experimental_rerun()
+                st.session_state.just_saved_daily = True
+                st.success("Daily entry saved!")
+
+    # Safe rerun after daily save
+    if st.session_state.just_saved_daily:
+        st.session_state.just_saved_daily = False
+        st.experimental_rerun()
 
     # ---------- WEEKLY ----------
     with tabs[1]:
@@ -193,8 +204,13 @@ else:
             }
             entry["co2_saved"] = calculate_co2(entry, baseline, "weekly")
             log_entry(username, entry)
-            st.success("Saved!")
-            st.experimental_rerun()
+            st.session_state.just_saved_weekly = True
+            st.success("Weekly entry saved!")
+
+    # Safe rerun after weekly save
+    if st.session_state.just_saved_weekly:
+        st.session_state.just_saved_weekly = False
+        st.experimental_rerun()
 
     # ---------- INSIGHTS ----------
     with tabs[2]:
