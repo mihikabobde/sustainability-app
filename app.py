@@ -16,13 +16,13 @@ EF_LAUNDRY = 2.5
 
 DATA_DIR = "user_data"
 USERS_FILE = "users.json"
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ---------------- HELPERS ----------------
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-@st.cache_data
 def load_users():
     if not os.path.exists(USERS_FILE):
         return {}
@@ -35,24 +35,17 @@ def load_users():
 def save_users(users):
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=2)
-    load_users.clear()  # clear cache after save
 
 def get_user_file(username):
     return os.path.join(DATA_DIR, f"{username}_data.csv")
 
-@st.cache_data
-def load_user_data(username):
-    file = get_user_file(username)
-    if not os.path.exists(file):
-        return pd.DataFrame()
-    return pd.read_csv(file)
-
 def log_entry(username, entry):
     file = get_user_file(username)
-    df = load_user_data(username)
+    if not os.path.exists(file):
+        pd.DataFrame(columns=entry.keys()).to_csv(file, index=False)
+    df = pd.read_csv(file)
     df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
     df.to_csv(file, index=False)
-    load_user_data.clear()  # clear cache after logging
 
 def calculate_co2(entry, baseline, entry_type):
     miles = max(baseline["miles"] - (entry.get("miles") or 0), 0) * EF_MILE
@@ -67,17 +60,17 @@ def calculate_co2(entry, baseline, entry_type):
     return miles + shower + plastic + takeout + laundry
 
 def get_streaks(df):
-    if df.empty:
-        return 0, 0
     df["date"] = pd.to_datetime(df["date"]).dt.date
     days = sorted(df["date"].unique(), reverse=True)
-    today = date.today()
+
     daily_streak = 0
+    today = date.today()
     for i, d in enumerate(days):
         if d == today - timedelta(days=i):
             daily_streak += 1
         else:
             break
+
     weeks = sorted({d.isocalendar()[:2] for d in days}, reverse=True)
     weekly_streak = 0
     current = today.isocalendar()[:2]
@@ -86,21 +79,17 @@ def get_streaks(df):
             weekly_streak += 1
         else:
             break
+
     return daily_streak, weekly_streak
 
 # ---------------- STREAMLIT SETUP ----------------
 st.set_page_config(page_title="Sustainability Tracker", layout="wide")
 st.title("🌱 Sustainability Tracker")
 
-# ---------------- SESSION STATE FLAGS ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
     st.session_state.username = ""
-if "just_saved_daily" not in st.session_state:
-    st.session_state.just_saved_daily = False
-if "just_saved_weekly" not in st.session_state:
-    st.session_state.just_saved_weekly = False
 
 users = load_users()
 
@@ -117,7 +106,7 @@ if not st.session_state.logged_in:
             if u in users and users[u]["password"] == hash_password(p):
                 st.session_state.logged_in = True
                 st.session_state.username = u
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid credentials")
 
@@ -147,7 +136,7 @@ if not st.session_state.logged_in:
                 save_users(users)
                 st.session_state.logged_in = True
                 st.session_state.username = new_u
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid or duplicate username")
 
@@ -155,7 +144,7 @@ if not st.session_state.logged_in:
 else:
     username = st.session_state.username
     baseline = users[username]["baseline"]
-    df = load_user_data(username)
+    file = get_user_file(username)
 
     tabs = st.tabs(["Daily", "Weekly", "Insights", "Settings"])
 
@@ -165,8 +154,7 @@ else:
             miles = st.number_input("Miles today", 0.0, value=baseline["miles"])
             shower = st.number_input("Shower minutes today", 0.0, value=baseline["shower_minutes"])
             plastic = st.number_input("Plastic bottles today", 0, value=baseline["plastic_bottles"])
-            submitted_daily = st.form_submit_button("Save Daily")
-            if submitted_daily:
+            if st.form_submit_button("Save"):
                 entry = {
                     "timestamp": datetime.now().isoformat(),
                     "date": date.today().isoformat(),
@@ -179,13 +167,8 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2(entry, baseline, "daily")
                 log_entry(username, entry)
-                st.session_state.just_saved_daily = True
-                st.success("Daily entry saved!")
-
-    # Safe rerun after daily save
-    if st.session_state.just_saved_daily:
-        st.session_state.just_saved_daily = False
-        st.experimental_rerun()
+                st.success("Saved!")
+                st.rerun()
 
     # ---------- WEEKLY ----------
     with tabs[1]:
@@ -204,29 +187,25 @@ else:
             }
             entry["co2_saved"] = calculate_co2(entry, baseline, "weekly")
             log_entry(username, entry)
-            st.session_state.just_saved_weekly = True
-            st.success("Weekly entry saved!")
-
-    # Safe rerun after weekly save
-    if st.session_state.just_saved_weekly:
-        st.session_state.just_saved_weekly = False
-        st.experimental_rerun()
+            st.success("Saved!")
+            st.rerun()
 
     # ---------- INSIGHTS ----------
     with tabs[2]:
-        if df.empty:
+        if not os.path.exists(file):
             st.info("Log some data to see insights!")
         else:
+            df = pd.read_csv(file)
             df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
+
             daily_streak, weekly_streak = get_streaks(df)
 
-            # Streaks
             c1, c2 = st.columns(2)
             c1.metric("🔥 Daily Streak", f"{daily_streak} days")
             c2.metric("📆 Weekly Streak", f"{weekly_streak} weeks")
 
-            # Impact breakdown
             st.markdown("### 📊 Your Biggest Impact Areas")
+
             impact = {
                 "Driving": (baseline["miles"] - df["miles"].fillna(baseline["miles"])).sum() * EF_MILE,
                 "Showers": (baseline["shower_minutes"] - df["shower_minutes"].fillna(baseline["shower_minutes"])).sum() * EF_SHOWER,
@@ -234,26 +213,21 @@ else:
                 "Takeout": (baseline["takeout_meals"] - df["takeout_meals"].fillna(baseline["takeout_meals"])).sum() * EF_TAKEOUT,
                 "Laundry": (baseline["laundry_loads"] - df["laundry_loads"].fillna(baseline["laundry_loads"])).sum() / 7 * EF_LAUNDRY,
             }
+
             impact_df = pd.DataFrame.from_dict(impact, orient="index", columns=["CO₂ Saved"])
             fig, ax = plt.subplots()
             impact_df.plot(kind="bar", ax=ax, legend=False)
             ax.set_ylabel("lbs CO₂")
             st.pyplot(fig)
 
-            # Weekly insight
             top = max(impact, key=impact.get)
             st.markdown(f"🧠 **Insight:** Your biggest contribution so far comes from **{top.lower()} changes**.")
 
-            # Real-world equivalence
             total = df["co2_saved"].sum()
             st.markdown("### 🌍 What Your Impact Equals")
             st.write(f"📱 Charging **{int(total / 0.008)} smartphones**")
             st.write(f"🚗 Avoiding **{int(total / 0.9)} miles driven**")
             st.write(f"🌳 Equivalent to **{round(total / 48, 2)} trees planted for a year**")
-
-            # If everyone did this
-            st.markdown("### 🌏 If Everyone Did This")
-            st.write(f"If 1,000 people followed your habits for a year, it would save **{round(total * 1000, 2)} lbs of CO₂**!")
 
     # ---------- SETTINGS ----------
     with tabs[3]:
@@ -261,4 +235,4 @@ else:
         if st.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.username = ""
-            st.experimental_rerun()
+            st.rerun()
