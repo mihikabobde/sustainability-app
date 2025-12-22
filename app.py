@@ -139,7 +139,7 @@ if not st.session_state["logged_in"]:
             if username_input and username_input in users and users[username_input].get("password") == hash_password(password_input or ""):
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username_input
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Incorrect username or password.")
 
@@ -176,7 +176,7 @@ if not st.session_state["logged_in"]:
                 st.success("Account created! Logging you in... 🚀")
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = new_user
-                st.experimental_rerun()
+                st.rerun()
 
 # ---------------- LOGGED-IN VIEW -----------------
 else:
@@ -186,7 +186,7 @@ else:
         st.warning("User not found on disk. You've been logged out.")
         st.session_state["logged_in"] = False
         st.session_state["username"] = ""
-        st.experimental_rerun()
+        st.rerun()
 
     baseline = users[username].get("baseline", {
         "miles": 5.0,
@@ -231,7 +231,7 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "daily")
                 log_entry(username, entry)
-                st.experimental_rerun()
+                st.rerun()
 
     # ---------------- Weekly -----------------
     with tabs[1]:
@@ -255,7 +255,7 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "weekly")
                 log_entry(username, entry)
-                st.experimental_rerun()
+                st.rerun()
 
     # ---------------- Dashboard -----------------
     with tabs[2]:
@@ -333,4 +333,4 @@ else:
         if st.button("Logout"):
             st.session_state["logged_in"] = False
             st.session_state["username"] = ""
-            st.experimental_rerun()
+            st.rerun()
