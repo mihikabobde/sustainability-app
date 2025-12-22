@@ -246,7 +246,7 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "daily")
                 log_entry(username, entry)
-                st.experimental_rerun()
+                st.rerun()
 
     with tabs[1]:
         st.subheader("Weekly Tracker")
@@ -268,7 +268,7 @@ else:
                 }
                 entry["co2_saved"] = calculate_co2_savings(entry, baseline, "weekly")
                 log_entry(username, entry)
-                st.experimental_rerun()
+                st.rerun()
 
     with tabs[2]:
         st.subheader("Dashboard")
