@@ -282,6 +282,11 @@ with tabs[3]:
         if "co2_saved" not in df.columns:
             df["co2_saved"] = 0
         df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
+
+        # Ensure date column is datetime
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
         st.metric("Average Daily CO₂ Saved", round(df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0,2))
         st.metric("Average Weekly CO₂ Saved", round(df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0,2))
         st.write("Total Entries:", len(df))
@@ -300,7 +305,9 @@ with tabs[3]:
                     subset = df[df["entry_type"]=="weekly"]
                 else:
                     subset = df[df["entry_type"]=="daily"]
-                # calculate behavior-specific CO2 savings
+                if subset.empty:
+                    impact_totals.append(0)
+                    continue
                 if b=="miles":
                     impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["miles"]-x,0)*EF_MILE).sum()))
                 elif b=="shower_minutes":
@@ -322,7 +329,7 @@ with tabs[3]:
         # --- 2. Personalized Weekly Insight ---
         st.markdown("### ⭐ Personalized Weekly Insight")
         week_start = datetime.today() - timedelta(days=6)
-        df_week = df[df["date"] >= week_start]
+        df_week = df[df["date"] >= week_start] if "date" in df.columns else pd.DataFrame()
         contrib = {}
         for b, label in zip(behaviors, labels):
             if b in df_week.columns:
@@ -368,6 +375,7 @@ with tabs[3]:
 
     else:
         st.info("No data yet!")
+
 
     # ---------- SETTINGS ----------
     with tabs[4]:
