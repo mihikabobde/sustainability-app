@@ -273,21 +273,101 @@ else:
         else:
             st.info("No entries yet!")
 
-    # ---------- INSIGHTS ----------
-    with tabs[3]:
-        st.subheader("Insights")
-        file_path = get_user_file(username)
-        if os.path.exists(file_path):
-            df = pd.read_csv(file_path)
-            if "co2_saved" not in df.columns:
-                df["co2_saved"] = 0
-            df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
-            st.metric("Average Daily CO₂ Saved", round(df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0,2))
-            st.metric("Average Weekly CO₂ Saved", round(df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0,2))
-            st.write("Total Entries:", len(df))
-            st.write("Days Logged:", df["date"].nunique())
-        else:
-            st.info("No data yet!")
+# ---------- INSIGHTS ----------
+with tabs[3]:
+    st.subheader("Insights")
+    file_path = get_user_file(username)
+    if os.path.exists(file_path):
+        df = pd.read_csv(file_path)
+        if "co2_saved" not in df.columns:
+            df["co2_saved"] = 0
+        df["co2_saved"] = pd.to_numeric(df["co2_saved"], errors="coerce").fillna(0)
+        st.metric("Average Daily CO₂ Saved", round(df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0,2))
+        st.metric("Average Weekly CO₂ Saved", round(df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0,2))
+        st.write("Total Entries:", len(df))
+        st.write("Days Logged:", df["date"].nunique())
+
+        # --- 1. What Helped Most? ---
+        st.markdown("### ⭐ What Helped Most?")
+        behaviors = ["miles", "shower_minutes", "plastic_bottles", "takeout_meals", "laundry_loads"]
+        labels = ["Driving Less", "Shorter Showers", "Fewer Plastic Bottles", "Less Takeout", "Laundry Changes"]
+
+        impact_totals = []
+        for b in behaviors:
+            if b in df.columns:
+                # compute CO2 saved from each behavior
+                if b in ["takeout_meals","laundry_loads"]:
+                    subset = df[df["entry_type"]=="weekly"]
+                else:
+                    subset = df[df["entry_type"]=="daily"]
+                # calculate behavior-specific CO2 savings
+                if b=="miles":
+                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["miles"]-x,0)*EF_MILE).sum()))
+                elif b=="shower_minutes":
+                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["shower_minutes"]-x,0)*EF_SHOWER).sum()))
+                elif b=="plastic_bottles":
+                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["plastic_bottles"]-x,0)*EF_PLASTIC).sum()))
+                elif b=="takeout_meals":
+                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["takeout_meals"]-x,0)*EF_TAKEOUT).sum()))
+                elif b=="laundry_loads":
+                    impact_totals.append((subset.get(b,0).apply(lambda x: max(baseline["laundry_loads"]-x,0)/7*EF_LAUNDRY).sum()))
+            else:
+                impact_totals.append(0)
+
+        fig2, ax2 = plt.subplots()
+        ax2.pie(impact_totals, labels=labels, autopct='%1.1f%%', startangle=140)
+        ax2.set_title("Your biggest CO₂ savings came from...")
+        st.pyplot(fig2)
+
+        # --- 2. Personalized Weekly Insight ---
+        st.markdown("### ⭐ Personalized Weekly Insight")
+        week_start = datetime.today() - timedelta(days=6)
+        df_week = df[df["date"] >= week_start]
+        contrib = {}
+        for b, label in zip(behaviors, labels):
+            if b in df_week.columns:
+                if b in ["takeout_meals","laundry_loads"]:
+                    sub = df_week[df_week["entry_type"]=="weekly"]
+                else:
+                    sub = df_week[df_week["entry_type"]=="daily"]
+                if sub.empty:
+                    contrib[label] = 0
+                    continue
+                if b=="miles":
+                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["miles"]-x,0)*EF_MILE).mean())
+                elif b=="shower_minutes":
+                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["shower_minutes"]-x,0)*EF_SHOWER).mean())
+                elif b=="plastic_bottles":
+                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["plastic_bottles"]-x,0)*EF_PLASTIC).mean())
+                elif b=="takeout_meals":
+                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["takeout_meals"]-x,0)*EF_TAKEOUT).mean())
+                elif b=="laundry_loads":
+                    contrib[label] = (sub.get(b,0).apply(lambda x:max(baseline["laundry_loads"]-x,0)/7*EF_LAUNDRY).mean())
+        if contrib:
+            top_behavior = max(contrib, key=contrib.get)
+            st.info(f"This week, **{top_behavior}** contributed the most to your CO₂ savings!")
+
+        # --- 4. Carbon-to-Real-World Translation ---
+        st.markdown("### ⭐ Carbon-to-Real-World Translation")
+        total_saved = df["co2_saved"].sum()
+        phone_charges = int(total_saved / 0.0003)  # ~0.0003 lbs per phone charge
+        miles_driven = round(total_saved / 0.9,1)
+        trees_planted = round(total_saved / 48,1)  # ~48 lbs CO2 per tree per year
+        st.write(f"💡 Your total CO₂ savings is roughly equivalent to:")
+        st.write(f"- Charging your phone **{phone_charges:,} times**")
+        st.write(f"- Avoiding driving **{miles_driven} miles**")
+        st.write(f"- Planting **{trees_planted} trees** per year")
+
+        # --- 6. “If Everyone Did This” Projection ---
+        st.markdown("### ⭐ If Everyone Did This")
+        num_people = 1000
+        avg_daily = df[df["entry_type"]=="daily"]["co2_saved"].mean() or 0
+        avg_weekly = df[df["entry_type"]=="weekly"]["co2_saved"].mean() or 0
+        projected_yearly = (avg_daily*365 + avg_weekly*52) * num_people
+        st.write(f"If **{num_people} people** followed your habits for a year, it could save **{round(projected_yearly,0):,} lbs of CO₂**!")
+
+    else:
+        st.info("No data yet!")
 
     # ---------- SETTINGS ----------
     with tabs[4]:
