@@ -298,11 +298,11 @@ else:
             df_last_week = df[df["date"] >= (datetime.today() - timedelta(days=6))]
             if not df_last_week.empty:
                 co2_categories = {
-                    "Driving Less": (df_last_week["miles"].max() - df_last_week["miles"]) * EF_MILE,
-                    "Shorter Showers": (df_last_week["shower_minutes"].max() - df_last_week["shower_minutes"]) * EF_SHOWER,
-                    "Fewer Plastic Bottles": (df_last_week["plastic_bottles"].max() - df_last_week["plastic_bottles"]) * EF_PLASTIC,
-                    "Less Takeout": (df_last_week["takeout_meals"].max() - df_last_week["takeout_meals"]) * EF_TAKEOUT if "takeout_meals" in df_last_week.columns else 0,
-                    "Laundry Changes": (df_last_week["laundry_loads"].max() - df_last_week["laundry_loads"]) * EF_LAUNDRY / 7 if "laundry_loads" in df_last_week.columns else 0,
+                    "Miles": (df_last_week["miles"].max() - df_last_week["miles"]) * EF_MILE,
+                    "Showers": (df_last_week["shower_minutes"].max() - df_last_week["shower_minutes"]) * EF_SHOWER,
+                    "Plastic Bottles": (df_last_week["plastic_bottles"].max() - df_last_week["plastic_bottles"]) * EF_PLASTIC,
+                    "Takeout": (df_last_week["takeout_meals"].max() - df_last_week["takeout_meals"]) * EF_TAKEOUT if "takeout_meals" in df_last_week.columns else 0,
+                    "Laundry": (df_last_week["laundry_loads"].max() - df_last_week["laundry_loads"]) * EF_LAUNDRY / 7 if "laundry_loads" in df_last_week.columns else 0,
                 }
                 co2_total = [v.sum() for v in co2_categories.values()]
                 fig, ax = plt.subplots()
